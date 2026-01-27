@@ -1,0 +1,67 @@
+# Metrics layer schema and tests
+# Aggregated business metrics
+
+version: 2
+
+models:
+  - name: user_friction_summary
+    description: "Friction metrics aggregated by user tier"
+    columns:
+      - name: user_tier
+        description: "User tier (primary key)"
+        data_tests:
+          - unique
+          - not_null
+          - accepted_values:
+              values: ['free', 'pro', 'enterprise']
+      - name: total_sessions
+        description: "Count of sessions"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: avg_friction_score
+        description: "Average friction by tier"
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+  - name: daily_metrics
+    description: "Daily aggregated metrics for time series analysis"
+    columns:
+      - name: session_date
+        description: "Date (primary key)"
+        data_tests:
+          - unique
+          - not_null
+      - name: total_generations
+        description: "Daily generation count"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: active_users
+        description: "Daily active users"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: avg_success_rate_pct
+        description: "Daily average success rate (0-100)"
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: total_cost_credits
+        description: "Daily revenue in credits"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: avg_friction_score
+        description: "Daily average friction score"
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100

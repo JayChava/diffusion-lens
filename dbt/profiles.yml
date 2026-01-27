@@ -1,0 +1,7 @@
+genai_session_analyzer:
+  outputs:
+    dev:
+      type: duckdb
+      path: ../data/warehouse.duckdb
+      threads: 4
+  target: dev

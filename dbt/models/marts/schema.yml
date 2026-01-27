@@ -1,0 +1,145 @@
+# Marts layer schema and tests
+# Core dimensional model (star schema)
+
+version: 2
+
+models:
+  - name: dim_users
+    description: "User dimension with activity metrics"
+    columns:
+      - name: user_id
+        description: "Primary key"
+        data_tests:
+          - unique
+          - not_null
+      - name: user_tier
+        description: "Subscription tier"
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['free', 'pro', 'enterprise']
+      - name: total_generations
+        description: "Lifetime generation count"
+        data_tests:
+          - not_null
+      - name: lifetime_cost
+        description: "Total spending"
+        data_tests:
+          - not_null
+      - name: success_rate_pct
+        description: "Success rate percentage (0-100)"
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+  - name: dim_prompts
+    description: "Prompt dimension with categorization"
+    columns:
+      - name: prompt_id
+        description: "Primary key"
+        data_tests:
+          - unique
+          - not_null
+      - name: prompt_text
+        description: "The prompt text"
+        data_tests:
+          - not_null
+      - name: prompt_length_category
+        description: "Length bucket"
+        data_tests:
+          - accepted_values:
+              values: ['short', 'medium', 'long', 'very_long']
+
+  - name: fct_generations
+    description: "Fact table for individual generation events"
+    columns:
+      - name: generation_id
+        description: "Primary key"
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "Foreign key to dim_users"
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_users')
+              field: user_id
+      - name: prompt_id
+        description: "Foreign key to dim_prompts"
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_prompts')
+              field: prompt_id
+      - name: status
+        description: "Generation outcome"
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['success', 'timeout', 'safety_violation', 'rate_limited', 'model_error']
+      - name: latency_ms
+        description: "Response latency"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 60000  # Max 60 seconds
+      - name: cost_credits
+        description: "Cost in credits"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: is_success
+        description: "Boolean flag for success"
+        data_tests:
+          - accepted_values:
+              values: [0, 1]
+
+  - name: fct_sessions
+    description: "Session-level aggregations with friction score"
+    columns:
+      - name: session_id
+        description: "Primary key"
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "Foreign key to dim_users"
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_users')
+              field: user_id
+      - name: total_generations
+        description: "Generations in session"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+      - name: success_rate_pct
+        description: "Session success rate (0-100)"
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: friction_score
+        description: "Composite friction metric (0-100)"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: friction_category
+        description: "Friction bucket"
+        data_tests:
+          - accepted_values:
+              values: ['low', 'medium', 'high']
+      - name: total_cost_credits
+        description: "Session total cost"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0

@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: ftr_llm_analysis
+    description: "LLM-extracted prompt features (domain, style, complexity)"
+    columns:
+      - name: prompt_id
+        data_tests:
+          - unique
+          - not_null
+      - name: llm_domain
+        description: "Prompt domain category (portrait, character, animal, etc.)"
+      - name: llm_art_style
+        description: "Art style (photography, digital art, anime, etc.)"
+      - name: llm_complexity_score
+        description: "Prompt complexity 1-5"
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 5
+              where: "llm_complexity_score IS NOT NULL"
+
+  - name: ftr_text_embeddings
+    description: "Text embeddings for semantic search (384-dim)"
+    columns:
+      - name: prompt_id
+        data_tests:
+          - unique
+          - not_null
+      - name: text_embedding
+        description: "384-dimensional embedding vector from all-MiniLM-L6-v2"

@@ -1,0 +1,98 @@
+# dbt sources - raw tables loaded by Dagster
+# These are the entry points into our dbt DAG
+
+version: 2
+
+sources:
+  - name: raw
+    description: "Raw tables populated by Dagster ingestion and simulation assets"
+    schema: main  # DuckDB default schema
+
+    tables:
+      - name: raw_prompts
+        description: "Prompts loaded from DiffusionDB (HuggingFace)"
+        columns:
+          - name: prompt_id
+            description: "Primary key"
+            data_tests:
+              - unique
+              - not_null
+          - name: prompt
+            description: "The text prompt submitted by user"
+            data_tests:
+              - not_null
+          - name: token_count
+            description: "Approximate token count"
+          - name: generation_seed
+            description: "Random seed used for generation"
+
+      - name: raw_users
+        description: "Synthetic users with tier distribution"
+        columns:
+          - name: user_id
+            description: "Primary key"
+            data_tests:
+              - unique
+              - not_null
+          - name: user_tier
+            description: "Subscription tier"
+            data_tests:
+              - not_null
+              - accepted_values:
+                  values: ['free', 'pro', 'enterprise']
+          - name: signup_date
+            description: "When user signed up"
+            data_tests:
+              - not_null
+          - name: region
+            description: "User geographic region"
+            data_tests:
+              - accepted_values:
+                  values: ['us-west', 'us-east', 'europe', 'asia', 'other']
+          - name: device_type
+            description: "Primary device type"
+            data_tests:
+              - accepted_values:
+                  values: ['desktop', 'mobile', 'tablet']
+
+      - name: raw_generations
+        description: "Generation events with telemetry"
+        columns:
+          - name: generation_id
+            description: "Primary key"
+            data_tests:
+              - unique
+              - not_null
+          - name: prompt_id
+            description: "Foreign key to raw_prompts"
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('raw', 'raw_prompts')
+                  field: prompt_id
+          - name: user_id
+            description: "Foreign key to raw_users"
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('raw', 'raw_users')
+                  field: user_id
+          - name: status
+            description: "Generation outcome"
+            data_tests:
+              - not_null
+              - accepted_values:
+                  values: ['success', 'timeout', 'safety_violation', 'rate_limited', 'model_error']
+          - name: latency_ms
+            description: "Response time in milliseconds"
+            data_tests:
+              - not_null
+          - name: cost_credits
+            description: "Cost in credits"
+            data_tests:
+              - not_null
+          - name: session_date
+            description: "Date of generation"
+            data_tests:
+              - not_null
+

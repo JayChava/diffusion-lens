@@ -1,0 +1,88 @@
+# Staging layer schema and tests
+# These models clean and standardize raw data
+
+version: 2
+
+models:
+  - name: stg_users
+    description: "Cleaned user data from raw_users"
+    columns:
+      - name: user_id
+        description: "Primary key"
+        data_tests:
+          - unique
+          - not_null
+      - name: user_tier
+        description: "Subscription tier (free/pro/enterprise)"
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['free', 'pro', 'enterprise']
+      - name: signup_date
+        description: "User signup date"
+        data_tests:
+          - not_null
+      - name: region
+        description: "Geographic region"
+        data_tests:
+          - accepted_values:
+              values: ['us-west', 'us-east', 'europe', 'asia', 'other']
+      - name: device_type
+        description: "Primary device"
+        data_tests:
+          - accepted_values:
+              values: ['desktop', 'mobile', 'tablet']
+
+  - name: stg_prompts
+    description: "Cleaned prompt data from raw_prompts"
+    columns:
+      - name: prompt_id
+        description: "Primary key"
+        data_tests:
+          - unique
+          - not_null
+      - name: prompt_text
+        description: "The prompt text"
+        data_tests:
+          - not_null
+      - name: token_count
+        description: "Token count"
+        data_tests:
+          - not_null
+
+  - name: stg_generations
+    description: "Cleaned generation events with telemetry"
+    columns:
+      - name: generation_id
+        description: "Primary key"
+        data_tests:
+          - unique
+          - not_null
+      - name: prompt_id
+        description: "Foreign key to prompts"
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_prompts')
+              field: prompt_id
+      - name: user_id
+        description: "Foreign key to users"
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_users')
+              field: user_id
+      - name: status
+        description: "Generation outcome"
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['success', 'timeout', 'safety_violation', 'rate_limited', 'model_error']
+      - name: latency_ms
+        description: "Response latency in ms"
+        data_tests:
+          - not_null
+      - name: cost_credits
+        description: "Cost in credits"
+        data_tests:
+          - not_null

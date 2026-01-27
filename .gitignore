@@ -1,0 +1,48 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# DuckDB
+*.duckdb
+*.duckdb.wal
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Dagster
+.dagster_home/
+storage/
+.dagster/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Data (keep structure, ignore large files)
+data/*.parquet
+data/blob/
+data/warehouse.duckdb*
+
+# Logs
+logs/
+*.log
+
+# Temp Dagster
+.tmp_dagster_home_*/
+
+# Screenshots
+*.png
+!dashboard/assets/*.png
