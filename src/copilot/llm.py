@@ -12,7 +12,7 @@ from mlx_lm.sample_utils import make_sampler
 _model_cache = {}
 
 
-def load_model(model_name: str = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"):
+def load_model(model_name: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"):
     """
     Load and cache the LLM model.
 
@@ -30,7 +30,7 @@ def load_model(model_name: str = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"):
 
 
 def generate_sql(prompt: str, model=None, tokenizer=None, sampler=None,
-                 model_name: str = "mlx-community/Qwen2.5-1.5B-Instruct-4bit") -> str:
+                 model_name: str = "mlx-community/Qwen2.5-7B-Instruct-4bit") -> str:
     """
     Generate SQL from a prompt using MLX.
 

@@ -1,48 +1,43 @@
-# GenAI Session Analyzer
+# Diffusion Lens
 
-A local data platform that analyzes user friction and session costs in GenAI image generation workflows. Built as a portfolio project demonstrating data engineering and analytics skills.
+A local data platform analyzing user friction and session costs in GenAI image generation workflows. Features a SQL Copilot (local LLM) and semantic search over 10K prompts.
 
-## What It Does
+## Features
 
-Ingests real prompt data from DiffusionDB (2M prompts), enriches it with simulated telemetry (latency, errors, feedback, downloads), and exposes a dashboard showing:
-
-- **Friction Score** - Weighted metric of errors, latency, and retries
-- **Session Costs** - Credit consumption by user tier
-- **Engagement Signals** - Thumbs up/down, download rates
+- **Friction Analytics** - Weighted metric combining errors, latency, and retries
+- **SQL Copilot** - Natural language → SQL using local Qwen2.5-7B via MLX
+- **Session Explorer** - Semantic search over prompts with vector similarity
+- **Full Pipeline** - Dagster orchestration, dbt transformations, 22 data quality tests
 
 ## Tech Stack
 
-| Layer | Tool | Purpose |
-|-------|------|---------|
-| **Ingestion** | HuggingFace `datasets` | Stream DiffusionDB prompts |
-| **Storage** | DuckDB | Local OLAP, zero config |
-| **Orchestration** | Dagster | Asset-based pipeline |
-| **Transformation** | dbt-duckdb | Star schema modeling |
-| **Simulation** | Faker + NumPy | Realistic synthetic telemetry |
-| **Dashboard** | Streamlit + Plotly | Interactive analytics |
+| Layer | Tool | Why |
+|-------|------|-----|
+| **Storage** | DuckDB | OLAP-optimized, zero config, native vector search |
+| **Orchestration** | Dagster | Asset-based pipeline, beautiful UI |
+| **Transformation** | dbt-duckdb | Star schema, testable SQL models |
+| **ML Enrichment** | MLX + sentence-transformers | Local LLM + embeddings on Apple Silicon |
+| **Dashboard** | Streamlit | Interactive analytics + SQL Copilot |
 | **Environment** | uv | Fast Python packaging |
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
+# Clone and install
 cd genai-session-analyzer
 uv sync
 
-# 2. Run the data pipeline (loads 10K prompts, generates users, enriches telemetry)
-uv run python -m src.simulation.run_all
+# Option 1: Demo scripts (recommended)
+./demo/dagster.sh      # Start Dagster UI at :3000
+# Click "Materialize all" in UI, then:
+./demo/build_dbt.sh    # Build dbt models
+./demo/streamlit.sh    # Start dashboard at :8501
 
-# 3. Build dbt models (star schema)
-uv run dbt run --profiles-dir dbt --project-dir dbt
-
-# 4. Launch dashboard
-uv run streamlit run dashboard/app.py
-```
-
-Or use Dagster UI for visual pipeline control:
-```bash
+# Option 2: Manual
 uv run dagster dev -m src.pipeline.definitions
-# Open http://localhost:3000 → Materialize all
+# Materialize assets, then:
+cd dbt && uv run dbt build && cd ..
+uv run streamlit run dashboard/app.py
 ```
 
 ## Project Structure
@@ -51,28 +46,48 @@ uv run dagster dev -m src.pipeline.definitions
 genai-session-analyzer/
 ├── src/
 │   ├── ingestion/
-│   │   └── diffusiondb_loader.py    # HuggingFace → DuckDB
+│   │   ├── diffusiondb_loader.py  # HuggingFace → DuckDB
+│   │   ├── download_images.py     # Download images to blob storage
+│   │   └── link_images.py         # Link images to enrichment table
 │   ├── simulation/
-│   │   ├── user_generator.py        # Synthetic users (free/pro/enterprise)
-│   │   ├── telemetry_enricher.py    # Latency, status, feedback, downloads
-│   │   ├── session_builder.py       # 30-min session windowing
-│   │   └── run_all.py               # One-command pipeline
+│   │   ├── user_generator.py      # Synthetic users (free/pro/enterprise)
+│   │   ├── telemetry_enricher.py  # Latency, status, feedback, downloads
+│   │   └── session_builder.py     # Session assignment
+│   ├── enrichment/
+│   │   ├── precompute_embeddings.py  # Text embeddings (all-MiniLM-L6-v2)
+│   │   └── precompute_llm.py         # LLM analysis (Qwen2.5 via MLX)
+│   ├── copilot/
+│   │   ├── llm.py                 # SQL generation with MLX
+│   │   ├── schema.py              # Schema extraction for LLM
+│   │   ├── prompt.py              # Prompt templates
+│   │   └── sample.py              # CLI playground
+│   ├── explorer/
+│   │   └── sample.py              # Semantic search CLI
 │   └── pipeline/
-│       ├── assets.py                # Dagster asset definitions
-│       └── definitions.py           # Dagster entry point
+│       ├── assets.py              # Dagster asset definitions
+│       └── definitions.py         # Dagster entry point
 ├── dbt/
-│   ├── models/
-│   │   ├── staging/                 # stg_users, stg_prompts, stg_generations
-│   │   ├── marts/                   # dim_users, dim_prompts, fct_generations, fct_sessions
-│   │   └── metrics/                 # user_friction_summary, daily_metrics
-│   ├── dbt_project.yml
-│   └── profiles.yml
+│   └── models/
+│       ├── staging/               # stg_users, stg_prompts, stg_generations
+│       ├── marts/                 # dim_users, dim_prompts, fct_generations, fct_sessions
+│       ├── features/              # ftr_llm_analysis, ftr_text_embeddings
+│       └── metrics/               # user_friction_summary, daily_metrics
 ├── dashboard/
-│   └── app.py                       # Streamlit dashboard
-├── data/
-│   └── warehouse.duckdb             # Local analytics database
-└── src/
-    └── explore.ipynb                # Interactive data exploration
+│   └── app.py                     # Streamlit (1500+ lines, 5 pages)
+├── tests/
+│   └── test_pipeline.py           # 22 data quality tests
+├── demo/
+│   ├── dagster.sh                 # Start Dagster with lock check
+│   ├── streamlit.sh               # Start dashboard
+│   ├── build_dbt.sh               # Rebuild dbt models
+│   └── test.sh                    # Run data quality tests
+├── docs/
+│   ├── DEMO.md                    # Demo walkthrough
+│   ├── INTERVIEW_PREP.md          # Q&A for interviews
+│   └── LIVE_CODING_PREP.md        # Common modification patterns
+└── data/
+    ├── warehouse.duckdb           # Analytics database
+    └── blob/images/generations/   # 10K images (~5GB)
 ```
 
 ## Data Model
@@ -80,160 +95,149 @@ genai-session-analyzer/
 ### Star Schema
 
 ```
-              ┌─────────────┐
-              │  dim_users  │
-              │─────────────│
-              │ user_id     │
-              │ user_tier   │
-              │ region      │
-              │ lifetime_*  │
-              └──────┬──────┘
-                     │
-┌─────────────┐      │      ┌─────────────────────┐
-│ dim_prompts │      │      │   fct_generations   │
-│─────────────│      │      │─────────────────────│
-│ prompt_id   │──────┼──────│ generation_id       │
-│ prompt_text │      │      │ user_id (FK)        │
-│ complexity  │      └──────│ prompt_id (FK)      │
-│ token_count │             │ session_id          │
-└─────────────┘             │ latency_ms, status  │
-                            │ cost_credits        │
-                            │ feedback, downloaded│
-                            └──────────┬──────────┘
-                                       │
-                            ┌──────────▼──────────┐
-                            │    fct_sessions     │
-                            │─────────────────────│
-                            │ session_id          │
-                            │ friction_score      │
-                            │ friction_category   │
-                            │ success_rate_pct    │
-                            │ total_cost_credits  │
-                            └─────────────────────┘
+┌─────────────┐     ┌─────────────┐     ┌───────────────────┐
+│  dim_users  │     │ dim_prompts │     │  fct_generations  │
+├─────────────┤     ├─────────────┤     ├───────────────────┤
+│ user_id     │◄────│ prompt_id   │◄────│ generation_id     │
+│ user_tier   │     │ prompt_text │     │ user_id (FK)      │
+│ region      │     │ token_count │     │ prompt_id (FK)    │
+│ device_type │     │             │     │ session_id        │
+└─────────────┘     └─────────────┘     │ status, latency_ms│
+                                        │ cost_credits      │
+                                        └─────────┬─────────┘
+                                                  │
+                                        ┌─────────▼─────────┐
+                                        │   fct_sessions    │
+                                        ├───────────────────┤
+                                        │ session_id        │
+                                        │ friction_score    │
+                                        │ success_rate_pct  │
+                                        │ total_cost_credits│
+                                        └───────────────────┘
 ```
 
-### Friction Score Formula
+### Friction Score
 
 ```
-friction_score = (
-    (error_rate × 3.0 × 33.33) +
-    (latency_normalized × 2.0 × 33.33) +
-    (retry_rate × 1.0 × 33.33)
-)
+friction_score = (error_rate × 50) + (latency_norm × 33) + (retry_norm × 17)
 ```
 
-- **error_rate**: 1 - success_rate (0-1)
-- **latency_normalized**: avg_latency_ms / 5000 (capped at 1)
-- **retry_rate**: avg_retries / 2 (capped at 1)
+- **error_rate**: `1 - success_rate` (0-1)
+- **latency_norm**: `avg_latency_ms / 5000`, capped at 1
+- **retry_norm**: `avg_retries / 2`, capped at 1
 
-### Simulated Telemetry Logic
+Score is 0-100. Higher = worse experience.
 
-| Signal | Logic |
-|--------|-------|
-| **Status** | NSFW keywords → 85% safety_violation; >75 tokens → 15% timeout; free tier → 8% rate_limited |
-| **Latency** | ~50ms/token + log-normal noise; timeout = 30s; safety rejection = 100-500ms |
-| **Feedback** | 10% free, 20% pro, 25% enterprise leave feedback; success → 80% thumbs up |
-| **Download** | Only on success; 40% free, 65% pro, 80% enterprise base rate |
+## Dashboard Pages
 
-## Key Metrics (December 2025 Dataset)
+| Page | What it shows |
+|------|---------------|
+| **Overview** | Key metrics, navigation cards |
+| **Architecture** | Tech stack, data flow diagram |
+| **Analytics** | Friction by tier, time series, quality by segment |
+| **Session Explorer** | Semantic search with vector similarity |
+| **SQL Copilot** | Natural language → SQL with local LLM |
 
-| Metric | Value |
-|--------|-------|
-| Total Users | 500 |
-| Total Sessions | 9,748 |
-| Total Generations | 10,000 |
-| Overall Success Rate | 94.1% |
-| Avg Friction Score | 24.8 |
+## SQL Copilot
 
-### By User Tier
+Ask questions in natural language, get SQL:
 
-| Tier | Users | Avg Friction | Success Rate | Download Rate | Feedback Rate |
-|------|-------|--------------|--------------|---------------|---------------|
-| Free | 342 | 28.3 | 89.7% | 42.8% | 10.7% |
-| Pro | 130 | 23.1 | 96.7% | 67.5% | 19.4% |
-| Enterprise | 28 | 23.1 | 96.5% | 83.6% | 24.1% |
-
-## Demo Script
-
-### 1. Show the Pipeline (30 sec)
 ```bash
-uv run dagster dev -m src.pipeline.definitions
-# Open localhost:3000, show asset graph
+# CLI playground
+uv run python -m src.copilot.sample
 ```
 
-### 2. Raw → Transformed (2 min)
+Examples:
+- "Show error rate by user tier"
+- "Top 10 users by session cost"
+- "Average latency by model version"
+
+**Model:** Qwen2.5-7B-Instruct-4bit via MLX (~15s generation)
+
+## Session Explorer
+
+Semantic search over prompts:
+
 ```bash
-uv run python -c "
-import duckdb
-conn = duckdb.connect('data/warehouse.duckdb')
-print(conn.execute('SELECT * FROM fct_sessions LIMIT 5').fetchdf())
-"
+# CLI playground
+uv run python -m src.explorer.sample "cyberpunk city"
 ```
 
-### 3. Dashboard Walkthrough (3 min)
+**Model:** all-MiniLM-L6-v2 (384-dim embeddings) + DuckDB HNSW index
+
+## Testing
+
 ```bash
-uv run streamlit run dashboard/app.py
-```
-- Friction by tier (free users struggle more)
-- Daily trends (stable ops)
-- Session explorer (filter high-friction sessions)
+# Run all 22 data quality tests
+./demo/test.sh
 
-### 4. Live Query (2 min)
-```sql
--- Do power users churn less?
-SELECT
-    user_tier,
-    AVG(friction_score) as avg_friction,
-    COUNT(*) as sessions
-FROM fct_sessions
-GROUP BY user_tier
-ORDER BY avg_friction;
+# Or directly
+uv run pytest tests/test_pipeline.py -v
 ```
 
-### 5. Design Decisions (3 min)
-- **Why DuckDB?** Zero-config OLAP, perfect for local analytics
-- **Why star schema?** Separates dimensions from facts, enables flexible querying
-- **Why Dagster over Airflow?** Asset-based (not task-based), better for analytics pipelines
-- **Simulation realism** - Status derived from prompt content, not random
+Tests include:
+- Table existence
+- Row counts and data integrity
+- Valid values (tiers, statuses)
+- Business logic (success rate 50-99%, friction 0-100)
+- No orphan records
 
 ## Development
 
 ```bash
 # Run pipeline with custom size
-uv run python -m src.simulation.run_all --prompts 100000 --users 2000
+uv run python -m src.simulation.run_all --prompts 1000 --users 100
 
 # Rebuild dbt models
-uv run dbt run --profiles-dir dbt --project-dir dbt
+./demo/build_dbt.sh
 
-# Explore data interactively
-uv run jupyter notebook src/explore.ipynb
+# Run ML enrichment (takes ~1hr for 10K)
+uv run python -m src.enrichment.precompute_embeddings
+uv run python -m src.enrichment.precompute_llm --limit 100
 
 # Format code
 uv run ruff format .
 ```
 
-## Architecture Diagram
+## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                           DATA FLOW                                   │
-└──────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         DATA FLOW                                │
+└─────────────────────────────────────────────────────────────────┘
 
-  HuggingFace                                              Streamlit
-  DiffusionDB                                              Dashboard
-      │                                                        ▲
-      ▼                                                        │
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────────┤
-│ Ingestion│───▶│Simulation│───▶│  Dagster │───▶│     dbt      │
-│  Loader  │    │ Enricher │    │  Assets  │    │  Transform   │
-└──────────┘    └──────────┘    └──────────┘    └──────────────┘
-                                      │
-                                      ▼
-                               ┌──────────────┐
-                               │   DuckDB     │
-                               │  warehouse   │
-                               └──────────────┘
+  HuggingFace        Simulation         Dagster           dbt
+  DiffusionDB        (Faker/NumPy)      Assets            Transform
+      │                   │                │                  │
+      ▼                   ▼                ▼                  ▼
+┌──────────┐       ┌──────────┐      ┌──────────┐      ┌──────────┐
+│raw_prompts│──────│raw_users │──────│raw_gens  │──────│ dim/fct  │
+│  (10K)   │       │  (500)   │      │(telemetry)│     │  tables  │
+└──────────┘       └──────────┘      └──────────┘      └──────────┘
+                                           │
+                                           ▼
+                                    ┌──────────────┐
+                                    │   DuckDB     │
+                                    │  warehouse   │
+                                    └──────────────┘
+                                           │
+                   ┌───────────────────────┼───────────────────────┐
+                   ▼                       ▼                       ▼
+            ┌──────────┐            ┌──────────┐            ┌──────────┐
+            │ Dashboard │            │SQL Copilot│            │ Explorer │
+            │(Streamlit)│            │  (MLX)   │            │(Embeddings)│
+            └──────────┘            └──────────┘            └──────────┘
 ```
+
+## Production Migration Path
+
+| Local | Production |
+|-------|------------|
+| DuckDB | MotherDuck or Snowflake |
+| Local blob storage | S3 + CloudFront |
+| MLX (Apple Silicon) | vLLM/TGI on GPU or Claude API |
+| Dagster dev | Dagster Cloud |
+| Streamlit | Evidence or custom React |
 
 ---
 

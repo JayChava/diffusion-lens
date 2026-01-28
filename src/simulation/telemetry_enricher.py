@@ -23,8 +23,9 @@ import numpy as np
 from datetime import datetime, timedelta
 import re
 
-random.seed(42)
-np.random.seed(42)
+# Seeds removed - each run produces different telemetry data
+# random.seed(42)
+# np.random.seed(42)
 
 # NSFW/safety keywords (subset for demo)
 SAFETY_KEYWORDS = [
@@ -48,46 +49,48 @@ def _has_safety_concern(prompt: str) -> bool:
     return any(kw in prompt_lower for kw in SAFETY_KEYWORDS)
 
 
+# Per-run randomized rates (set once at module load for consistency within a run)
+_RUN_RATES = {
+    "safety_violation": random.uniform(0.70, 0.95),  # 70-95% for NSFW
+    "timeout": random.uniform(0.05, 0.25),           # 5-25% for long prompts
+    "rate_limited": random.uniform(0.03, 0.15),      # 3-15% for free tier
+    "model_error": random.uniform(0.01, 0.08),       # 1-8% baseline errors
+}
+
 def _determine_status(prompt: str, user_tier: str, token_count: int) -> str:
     """
     Determine generation status based on prompt characteristics.
-
-    Logic:
-    - Safety keywords → 85% safety_violation
-    - Very long prompts (>75 tokens) → 15% timeout
-    - Free tier → 8% rate_limited
-    - Baseline → 2% model_error
-    - Otherwise → success
+    Rates vary between pipeline runs for visible changes in metrics.
     """
     # Safety check first
     if _has_safety_concern(prompt):
-        return "safety_violation" if random.random() < 0.85 else "success"
+        return "safety_violation" if random.random() < _RUN_RATES["safety_violation"] else "success"
 
     # Timeout for complex prompts
     if token_count > 75:
-        return "timeout" if random.random() < 0.15 else "success"
+        return "timeout" if random.random() < _RUN_RATES["timeout"] else "success"
 
     # Rate limiting for free tier
-    if user_tier == "free" and random.random() < 0.08:
+    if user_tier == "free" and random.random() < _RUN_RATES["rate_limited"]:
         return "rate_limited"
 
     # Random model errors
-    if random.random() < 0.02:
+    if random.random() < _RUN_RATES["model_error"]:
         return "model_error"
 
     return "success"
 
 
+# Per-run latency multiplier (varies average latency between runs)
+_LATENCY_MULTIPLIER = random.uniform(0.6, 1.5)
+
 def _generate_latency(token_count: int, status: str) -> int:
     """
     Generate realistic latency based on prompt and outcome.
-
-    - Timeout: fixed 30s
-    - Safety violation: fast rejection (100-500ms)
-    - Success: ~50ms per token with log-normal noise
+    Latency scale varies between runs for visible changes.
     """
     if status == "timeout":
-        return 30000
+        return random.randint(25000, 35000)  # 25-35s timeout
 
     if status == "safety_violation":
         return random.randint(100, 500)
@@ -95,8 +98,8 @@ def _generate_latency(token_count: int, status: str) -> int:
     if status in ("rate_limited", "model_error"):
         return random.randint(50, 200)
 
-    # Success: base latency with realistic variance
-    base = token_count * 50
+    # Success: base latency with realistic variance + per-run multiplier
+    base = token_count * 50 * _LATENCY_MULTIPLIER
     noise = np.random.lognormal(0, 0.4)
     return int(max(200, min(25000, base * noise)))
 
@@ -204,13 +207,8 @@ def _generate_growth_timestamp(user_signup: datetime, end_date: datetime, growth
 
     total_seconds = (end_date - user_signup).total_seconds()
 
-    # Beta distribution biased toward end (more activity later)
-    # Lower alpha = more skew toward end
-    random_val = np.random.beta(1.2, 2.5)  # Skewed toward 0
-    random_val = 1 - random_val  # Flip to skew toward 1 (end)
-
-    # Apply growth bias
-    random_val = random_val ** (1 - growth_bias + 0.3)
+    # Uniform distribution for even spread across available time window
+    random_val = np.random.uniform(0, 1)
 
     seconds_offset = int(random_val * total_seconds)
     return user_signup + timedelta(seconds=seconds_offset)

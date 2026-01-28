@@ -22,12 +22,18 @@ Generate a SQL query to answer the following question:
 The query will run on a DuckDB database with the following schema:
 {schema_text}
 
+### Current Date Context
+- The data is from December 2025
+- For "December" or "this month", use: generated_at >= '2025-12-01' AND generated_at < '2026-01-01'
+
 ### Key relationships
+- fct_sessions.user_id → dim_users.user_id (JOIN to get device_type, signup_date)
 - fct_generations.user_id → dim_users.user_id
 - fct_generations.prompt_id → dim_prompts.prompt_id
-- fct_sessions contains aggregated metrics per session
+- fct_sessions contains aggregated metrics per session (friction_score, success_rate_pct, total_cost_credits)
+- IMPORTANT: fct_generations already contains user_tier and region (denormalized). No JOIN needed for user_tier analysis on fct_generations.
+- IMPORTANT: device_type is ONLY in dim_users, not in fct_sessions. To analyze by device_type, JOIN fct_sessions with dim_users on user_id
 - ftr_llm_analysis.prompt_id → dim_prompts.prompt_id (for LLM features like llm_domain, llm_art_style)
-- ftr_text_embeddings.prompt_id → dim_prompts.prompt_id (for semantic search)
 
 ### Instructions
 - Use DuckDB SQL syntax

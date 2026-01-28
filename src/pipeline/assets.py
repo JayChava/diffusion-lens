@@ -1,5 +1,5 @@
 """
-Dagster Assets - Data pipeline assets for GenAI Session Analyzer.
+Dagster Assets - Data pipeline assets for GenAI Diffusion Lens.
 
 Asset DAG:
     raw_prompts (DiffusionDB) ──┬──> raw_generations ──> sessions_built
@@ -40,6 +40,29 @@ ACTIVITY_MONTH = 12
 def raw_prompts(context: AssetExecutionContext) -> MaterializeResult:
     """Load prompts from DiffusionDB into DuckDB."""
 
+    # GUARD: Skip if data already exists (protects enrichments)
+    conn = duckdb.connect(DB_PATH, read_only=True)
+    try:
+        existing = conn.execute("SELECT COUNT(*) FROM raw_prompts").fetchone()[0]
+    except:
+        existing = 0
+    conn.close()
+
+    if existing > 0:
+        context.log.info(f"SKIPPED: raw_prompts already has {existing:,} rows. Delete table to regenerate.")
+        # Return existing stats
+        conn = duckdb.connect(DB_PATH, read_only=True)
+        sample = conn.execute("SELECT prompt FROM raw_prompts LIMIT 3").fetchall()
+        conn.close()
+        return MaterializeResult(
+            metadata={
+                "row_count": existing,
+                "source": "poloclub/diffusiondb",
+                "status": "SKIPPED (data exists)",
+                "sample_prompts": MetadataValue.md("\n".join([f"- {s[0][:80]}..." for s in sample])),
+            }
+        )
+
     context.log.info(f"Loading {NUM_PROMPTS:,} prompts from DiffusionDB...")
     row_count = load_diffusiondb_prompts(num_rows=NUM_PROMPTS, db_path=DB_PATH)
 
@@ -63,6 +86,33 @@ def raw_prompts(context: AssetExecutionContext) -> MaterializeResult:
 )
 def raw_users(context: AssetExecutionContext) -> MaterializeResult:
     """Generate synthetic users with exponential signup growth throughout the month."""
+
+    # GUARD: Skip if data already exists (protects enrichments that depend on user_ids)
+    conn = duckdb.connect(DB_PATH, read_only=True)
+    try:
+        existing = conn.execute("SELECT COUNT(*) FROM raw_users").fetchone()[0]
+    except:
+        existing = 0
+    conn.close()
+
+    if existing > 0:
+        context.log.info(f"SKIPPED: raw_users already has {existing:,} rows. Delete table to regenerate.")
+        conn = duckdb.connect(DB_PATH, read_only=True)
+        tiers = conn.execute("""
+            SELECT user_tier, COUNT(*) as cnt
+            FROM raw_users
+            GROUP BY user_tier
+            ORDER BY cnt DESC
+        """).fetchall()
+        conn.close()
+        tier_breakdown = {tier: cnt for tier, cnt in tiers}
+        return MaterializeResult(
+            metadata={
+                "row_count": existing,
+                "status": "SKIPPED (data exists)",
+                "tier_distribution": MetadataValue.json(tier_breakdown),
+            }
+        )
 
     context.log.info(f"Generating {NUM_USERS} synthetic users with growth pattern...")
     row_count = generate_users(
@@ -172,7 +222,7 @@ def raw_generations(context: AssetExecutionContext) -> MaterializeResult:
 @asset(
     group_name="simulation",
     deps=[raw_generations],
-    description="Sessions built from generations (30-min timeout window)",
+    description="Sessions built from generations (1 session ≈ 1 generation in this dataset)",
 )
 def sessions_built(context: AssetExecutionContext) -> MaterializeResult:
     """Build sessions from raw generations."""
@@ -223,14 +273,14 @@ def text_embeddings(context: AssetExecutionContext) -> MaterializeResult:
 
     total = conn.execute("SELECT COUNT(*) FROM dim_prompts").fetchone()[0]
 
-    # Check prompt_enrichments table for embeddings
-    tables = conn.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'prompt_enrichments'").fetchall()
+    # Check raw_prompt_enrichments table for embeddings
+    tables = conn.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'raw_prompt_enrichments'").fetchall()
     has_enrichment_table = len(tables) > 0
 
     embedded = 0
     if has_enrichment_table:
         embedded = conn.execute("""
-            SELECT COUNT(*) FROM prompt_enrichments WHERE text_embedding IS NOT NULL
+            SELECT COUNT(*) FROM raw_prompt_enrichments WHERE text_embedding IS NOT NULL
         """).fetchone()[0] or 0
 
     conn.close()
@@ -269,11 +319,11 @@ def llm_prompt_analysis(context: AssetExecutionContext) -> MaterializeResult:
     """
     conn = duckdb.connect(DB_PATH, read_only=True)
 
-    # Check prompt_enrichments table (separate from dbt-managed tables)
+    # Check raw_prompt_enrichments table (separate from dbt-managed tables)
     total = conn.execute("SELECT COUNT(*) FROM dim_prompts").fetchone()[0]
 
-    # Check if prompt_enrichments table exists
-    tables = conn.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'prompt_enrichments'").fetchall()
+    # Check if raw_prompt_enrichments table exists
+    tables = conn.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'raw_prompt_enrichments'").fetchall()
     has_enrichment_table = len(tables) > 0
 
     enriched = 0
@@ -282,16 +332,16 @@ def llm_prompt_analysis(context: AssetExecutionContext) -> MaterializeResult:
     style_dist = {}
 
     if has_enrichment_table:
-        # Check enrichment status from prompt_enrichments
+        # Check enrichment status from raw_prompt_enrichments
         enriched = conn.execute("""
-            SELECT COUNT(*) FROM prompt_enrichments WHERE llm_domain IS NOT NULL
+            SELECT COUNT(*) FROM raw_prompt_enrichments WHERE llm_domain IS NOT NULL
         """).fetchone()[0] or 0
         coverage = enriched / total * 100 if total > 0 else 0
 
         if enriched > 0:
             domains = conn.execute("""
                 SELECT llm_domain, COUNT(*) as cnt
-                FROM prompt_enrichments
+                FROM raw_prompt_enrichments
                 WHERE llm_domain IS NOT NULL
                 GROUP BY llm_domain
                 ORDER BY cnt DESC
@@ -300,7 +350,7 @@ def llm_prompt_analysis(context: AssetExecutionContext) -> MaterializeResult:
 
             styles = conn.execute("""
                 SELECT llm_art_style, COUNT(*) as cnt
-                FROM prompt_enrichments
+                FROM raw_prompt_enrichments
                 WHERE llm_art_style IS NOT NULL
                 GROUP BY llm_art_style
                 ORDER BY cnt DESC

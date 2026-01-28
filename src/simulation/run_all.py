@@ -18,7 +18,7 @@ def run_pipeline(num_prompts: int = 10_000, num_users: int = 500, year: int = 20
     """Run the full ingestion and simulation pipeline."""
 
     print("=" * 60)
-    print("GenAI Session Analyzer - Data Pipeline")
+    print("GenAI Diffusion Lens - Data Pipeline")
     print("=" * 60)
 
     # Step 1: Load prompts from DiffusionDB

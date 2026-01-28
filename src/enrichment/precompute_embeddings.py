@@ -1,8 +1,11 @@
 """
 Semantic Search Embeddings - Pre-compute text embeddings using sentence-transformers.
 
-Generates 384-dim embeddings for each prompt text, stored in prompt_enrichments
+Generates 384-dim embeddings for each prompt text, stored in raw_prompt_enrichments
 (separate from dbt-managed tables) for fast vector similarity search with DuckDB VSS.
+
+Uses HNSW (Hierarchical Navigable Small World) index for approximate nearest neighbor
+search - O(log n) lookup instead of O(n) brute force.
 
 Usage:
     uv run python -m src.enrichment.precompute_embeddings
@@ -22,9 +25,9 @@ DB_PATH = PROJECT_ROOT / "data" / "warehouse.duckdb"
 
 
 def ensure_enrichment_table(con: duckdb.DuckDBPyConnection):
-    """Ensure prompt_enrichments table exists (separate from dbt-managed tables)."""
+    """Ensure raw_prompt_enrichments table exists (separate from dbt-managed tables)."""
     con.execute('''
-        CREATE TABLE IF NOT EXISTS prompt_enrichments (
+        CREATE TABLE IF NOT EXISTS raw_prompt_enrichments (
             prompt_id BIGINT PRIMARY KEY,
             -- LLM analysis (Qwen2.5 via MLX)
             llm_domain VARCHAR,
@@ -37,7 +40,7 @@ def ensure_enrichment_table(con: duckdb.DuckDBPyConnection):
             embedding_enriched_at TIMESTAMP
         )
     ''')
-    print("  prompt_enrichments table ready")
+    print("  raw_prompt_enrichments table ready")
 
 
 def create_vss_index(con: duckdb.DuckDBPyConnection):
@@ -53,9 +56,9 @@ def create_vss_index(con: duckdb.DuckDBPyConnection):
         indexes = con.execute("SELECT * FROM duckdb_indexes() WHERE index_name = 'enrichment_embedding_idx'").fetchdf()
 
         if len(indexes) == 0:
-            print("  Creating HNSW index on prompt_enrichments...")
+            print("  Creating HNSW index on raw_prompt_enrichments...")
             con.execute("""
-                CREATE INDEX enrichment_embedding_idx ON prompt_enrichments
+                CREATE INDEX enrichment_embedding_idx ON raw_prompt_enrichments
                 USING HNSW (text_embedding)
                 WITH (metric = 'cosine')
             """)
@@ -88,13 +91,13 @@ def run_embeddings(limit: int = None, batch_size: int = 100):
     print("\n[3/5] Ensuring enrichment table exists...")
     ensure_enrichment_table(con)
 
-    # Get prompts that need embeddings (not yet in prompt_enrichments or missing embedding)
+    # Get prompts that need embeddings (not yet in raw_prompt_enrichments or missing embedding)
     print("\n[4/5] Generating embeddings...")
 
     query = """
         SELECT p.prompt_id, p.prompt_text
         FROM dim_prompts p
-        LEFT JOIN prompt_enrichments e ON p.prompt_id = e.prompt_id
+        LEFT JOIN raw_prompt_enrichments e ON p.prompt_id = e.prompt_id
         WHERE e.text_embedding IS NULL
     """
     if limit:
@@ -119,16 +122,15 @@ def run_embeddings(limit: int = None, batch_size: int = 100):
             # Generate embeddings for batch
             embeddings = model.encode(batch_texts, show_progress_bar=False)
 
-            # Upsert to prompt_enrichments
-            for prompt_id, embedding in zip(batch_ids, embeddings):
-                embedding_list = embedding.tolist()
-                con.execute("""
-                    INSERT INTO prompt_enrichments (prompt_id, text_embedding, embedding_enriched_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT (prompt_id) DO UPDATE SET
-                        text_embedding = EXCLUDED.text_embedding,
-                        embedding_enriched_at = EXCLUDED.embedding_enriched_at
-                """, [prompt_id, embedding_list])
+            # Batch upsert to raw_prompt_enrichments
+            data = [(int(pid), emb.tolist()) for pid, emb in zip(batch_ids, embeddings)]
+            con.executemany("""
+                INSERT INTO raw_prompt_enrichments (prompt_id, text_embedding, embedding_enriched_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT (prompt_id) DO UPDATE SET
+                    text_embedding = EXCLUDED.text_embedding,
+                    embedding_enriched_at = EXCLUDED.embedding_enriched_at
+            """, data)
 
             # Progress
             processed = min(i + batch_size, total)
@@ -150,7 +152,7 @@ def run_embeddings(limit: int = None, batch_size: int = 100):
     sample = con.execute("""
         SELECT e.prompt_id, p.prompt_text,
                e.text_embedding[1:5] as embedding_preview
-        FROM prompt_enrichments e
+        FROM raw_prompt_enrichments e
         JOIN dim_prompts p ON e.prompt_id = p.prompt_id
         WHERE e.text_embedding IS NOT NULL
         LIMIT 3
@@ -166,7 +168,7 @@ def run_embeddings(limit: int = None, batch_size: int = 100):
         SELECT
             p.prompt_text,
             array_cosine_similarity(e.text_embedding, ?::FLOAT[384]) AS similarity
-        FROM prompt_enrichments e
+        FROM raw_prompt_enrichments e
         JOIN dim_prompts p ON e.prompt_id = p.prompt_id
         WHERE e.text_embedding IS NOT NULL
         ORDER BY similarity DESC

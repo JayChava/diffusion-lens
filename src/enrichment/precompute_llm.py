@@ -1,7 +1,7 @@
 """
 LLM Prompt Analysis - Pre-compute enrichment features using Qwen via MLX.
 
-Uses Pydantic to enforce valid domain and art_style values.
+Uses Pydantic to enforce valid domain and art_style values with automatic normalization.
 
 Extracts from each prompt:
 - domain: portrait, character, animal, environment, object, fantasy, scifi, fanart
@@ -16,7 +16,6 @@ Usage:
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 from typing import Literal
@@ -25,47 +24,84 @@ import duckdb
 import mlx.core as mx
 from mlx_lm import load, generate
 from mlx_lm.sample_utils import make_sampler
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from tqdm import tqdm
 
 # Project paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "warehouse.duckdb"
 
-# Predefined options (enforced by Pydantic)
-DOMAINS = Literal[
-    "portrait",    # faces, headshots, close-up of people/creatures
-    "character",   # full body people, figures, creatures with personality
-    "animal",      # pets, wildlife, creatures (non-humanoid focus)
-    "environment", # landscapes, cityscapes, interiors, architecture, scenes
-    "object",      # products, items, vehicles, food, still life
-    "fantasy",     # mythical, magical, dragons, fairies, supernatural
-    "scifi",       # cyberpunk, futuristic, space, robots, tech
-    "fanart",      # celebrities, known characters, movie/game/anime IP
-]
+# Valid options
+VALID_DOMAINS = ["portrait", "character", "animal", "environment", "object", "fantasy", "scifi", "fanart"]
+VALID_STYLES = ["photography", "digital art", "oil painting", "watercolor", "sketch", "3d render", "anime", "pixel art", "concept art", "pop art"]
 
-ART_STYLES = Literal[
-    "photography",    # realistic photos, film stills, CCTV, candid
-    "digital art",    # general digital illustration, artstation style
-    "oil painting",   # classical painting, brush strokes, canvas texture
-    "watercolor",     # soft edges, color bleeding, paper texture
-    "sketch",         # pencil, line art, drawings, charcoal
-    "3d render",      # CGI, Blender, 3D modeling, rendered
-    "anime",          # anime/manga style, Japanese animation
-    "pixel art",      # retro gaming, 8-bit, pixelated
-    "concept art",    # game/film concept art, artstation, detailed designs
-    "pop art",        # bold colors, Warhol style, graphic design
-]
+DOMAINS = Literal["portrait", "character", "animal", "environment", "object", "fantasy", "scifi", "fanart"]
+ART_STYLES = Literal["photography", "digital art", "oil painting", "watercolor", "sketch", "3d render", "anime", "pixel art", "concept art", "pop art"]
 
 
 class PromptAnalysis(BaseModel):
-    """Pydantic model enforcing valid values."""
+    """Pydantic model with automatic normalization via field validators."""
     domain: DOMAINS
     art_style: ART_STYLES
     complexity_score: int = Field(ge=1, le=5)
 
+    @field_validator('domain', mode='before')
+    @classmethod
+    def normalize_domain(cls, v):
+        if not isinstance(v, str):
+            return "character"
+        v = v.lower().strip()
+        # Map common LLM variations to valid values
+        mapping = {
+            'landscape': 'environment', 'scene': 'environment', 'interior': 'environment',
+            'cityscape': 'environment', 'nature': 'environment', 'abstract': 'object',
+            'creature': 'animal', 'pet': 'animal',
+        }
+        for key, val in mapping.items():
+            if key in v:
+                return val
+        return v if v in VALID_DOMAINS else "character"
 
-# LLM prompt template with explicit options and examples
+    @field_validator('art_style', mode='before')
+    @classmethod
+    def normalize_art_style(cls, v):
+        if not isinstance(v, str):
+            return "digital art"
+        v = v.lower().strip()
+        # Map common LLM variations to valid values
+        mapping = {
+            'photorealistic': 'photography', 'realistic': 'photography', 'photo': 'photography',
+            'film': 'photography', 'oil': 'oil painting', 'digital': 'digital art',
+            '3d': '3d render', 'cgi': '3d render', 'render': '3d render',
+            'pencil': 'sketch', 'drawing': 'sketch', 'line art': 'sketch',
+            'cg': 'digital art', 'illustration': 'digital art', 'manga': 'anime',
+            'retro': 'pixel art', '8-bit': 'pixel art', 'warhol': 'pop art', 'graphic': 'pop art',
+        }
+        for key, val in mapping.items():
+            if key in v:
+                return val
+        return v if v in VALID_STYLES else "digital art"
+
+    @field_validator('complexity_score', mode='before')
+    @classmethod
+    def normalize_complexity(cls, v):
+        try:
+            v = int(v)
+            return max(1, min(5, v))  # Clamp to 1-5
+        except (ValueError, TypeError):
+            return 3
+
+
+def parse_llm_response(response: str) -> PromptAnalysis:
+    """Extract JSON from LLM response and validate with Pydantic."""
+    start = response.find('{')
+    end = response.rfind('}') + 1
+    if start < 0 or end <= start:
+        raise ValueError("No JSON found")
+    return PromptAnalysis(**json.loads(response[start:end]))
+
+
+# LLM prompt template
 EXTRACTION_PROMPT = '''Classify this image generation prompt. Return ONLY valid JSON.
 
 Prompt: "{prompt}"
@@ -98,115 +134,29 @@ Return JSON: {{"domain": "X", "art_style": "Y", "complexity_score": N}}
 JSON:'''
 
 
-def parse_and_validate(response: str) -> PromptAnalysis:
-    """Parse LLM response and validate with Pydantic."""
-    # Find JSON in response
-    start = response.find('{')
-    end = response.rfind('}') + 1
-
-    if start < 0 or end <= start:
-        raise ValueError("No JSON found in response")
-
-    json_str = response[start:end]
-    data = json.loads(json_str)
-
-    # Normalize values before validation
-    if 'domain' in data:
-        data['domain'] = data['domain'].lower().strip()
-        # Map common domain variations
-        domain_map = {
-            'landscape': 'environment',
-            'scene': 'environment',
-            'interior': 'environment',
-            'cityscape': 'environment',
-            'nature': 'environment',
-            'abstract': 'object',  # map abstract to object as catch-all
-            'creature': 'animal',
-            'pet': 'animal',
-        }
-        for key, val in domain_map.items():
-            if key in data['domain']:
-                data['domain'] = val
-                break
-        # Validate domain
-        valid_domains = ['portrait', 'character', 'animal', 'environment', 'object', 'fantasy', 'scifi', 'fanart']
-        if data['domain'] not in valid_domains:
-            data['domain'] = 'character'  # default fallback
-
-    if 'art_style' in data:
-        data['art_style'] = data['art_style'].lower().strip()
-        # Map common variations
-        style_map = {
-            'photorealistic': 'photography',
-            'realistic': 'photography',
-            'photo': 'photography',
-            'film': 'photography',
-            'oil': 'oil painting',
-            'digital': 'digital art',
-            '3d': '3d render',
-            'cgi': '3d render',
-            'render': '3d render',
-            'pencil': 'sketch',
-            'drawing': 'sketch',
-            'line art': 'sketch',
-            'cg': 'digital art',
-            'illustration': 'digital art',
-            'manga': 'anime',
-            'retro': 'pixel art',
-            '8-bit': 'pixel art',
-            'warhol': 'pop art',
-            'graphic': 'pop art',
-        }
-        for key, val in style_map.items():
-            if key in data['art_style']:
-                data['art_style'] = val
-                break
-        # If still not valid, default to 'digital art'
-        valid_styles = ['photography', 'digital art', 'oil painting', 'watercolor',
-                       'sketch', '3d render', 'anime', 'pixel art', 'concept art', 'pop art']
-        if data['art_style'] not in valid_styles:
-            data['art_style'] = 'digital art'
-
-    # Validate with Pydantic
-    return PromptAnalysis(**data)
-
-
-def get_defaults() -> PromptAnalysis:
-    """Return default values when parsing fails."""
-    return PromptAnalysis(domain="character", art_style="digital art", complexity_score=3)
-
-
 def ensure_enrichment_table(con: duckdb.DuckDBPyConnection):
-    """Ensure prompt_enrichments table exists (separate from dbt-managed tables)."""
+    """Ensure raw_prompt_enrichments table exists."""
     con.execute('''
-        CREATE TABLE IF NOT EXISTS prompt_enrichments (
+        CREATE TABLE IF NOT EXISTS raw_prompt_enrichments (
             prompt_id BIGINT PRIMARY KEY,
-            -- LLM analysis (Qwen2.5 via MLX)
             llm_domain VARCHAR,
             llm_art_style VARCHAR,
             llm_complexity_score INTEGER,
-            -- Text embeddings (all-MiniLM-L6-v2)
             text_embedding FLOAT[384],
-            -- Metadata
             llm_enriched_at TIMESTAMP,
             embedding_enriched_at TIMESTAMP
         )
     ''')
-    print("  prompt_enrichments table ready")
 
 
 def run_enrichment(limit: int = None, reset: bool = False):
     """Run LLM enrichment on all prompts."""
     print("=" * 70)
-    print("LLM Prompt Analysis - Qwen2.5 via MLX (with Pydantic validation)")
+    print("LLM Prompt Analysis - Qwen2.5 via MLX (Pydantic validation)")
     print("=" * 70)
 
-    # Show valid options
-    print("\nValid domains:", "portrait, character, animal, environment, object, fantasy, scifi, fanart")
-    print("Valid styles:", "photography, digital art, oil painting, watercolor, sketch, 3d render, anime, pixel art, concept art, pop art")
-
     # Load model
-    print(f"\n[1/4] Loading model... (MLX {mx.__version__}, Device: {mx.default_device()})")
+    print(f"\n[1/4] Loading model... (MLX {mx.__version__})")
     model, tokenizer = load("mlx-community/Qwen2.5-1.5B-Instruct-4bit")
     sampler = make_sampler(temp=0.1)
     print("  Model ready!")
@@ -214,23 +164,20 @@ def run_enrichment(limit: int = None, reset: bool = False):
     # Connect to database
     print("\n[2/4] Connecting to DuckDB...")
     con = duckdb.connect(str(DB_PATH))
-    # Load VSS extension (required because table has HNSW index)
     con.execute("INSTALL vss; LOAD vss;")
-
-    # Ensure enrichment table exists
-    print("\n[3/4] Ensuring enrichment table exists...")
     ensure_enrichment_table(con)
 
     # Reset if requested
     if reset:
         print("  Resetting existing LLM enrichment data...")
-        con.execute("UPDATE prompt_enrichments SET llm_domain = NULL, llm_art_style = NULL, llm_complexity_score = NULL, llm_enriched_at = NULL")
+        con.execute("UPDATE raw_prompt_enrichments SET llm_domain = NULL, llm_art_style = NULL, llm_complexity_score = NULL, llm_enriched_at = NULL")
 
-    # Get prompts that need enrichment (not yet in prompt_enrichments or missing LLM data)
+    # Get prompts needing enrichment
+    print("\n[3/4] Finding prompts to process...")
     query = """
         SELECT p.prompt_id, p.prompt_text
         FROM dim_prompts p
-        LEFT JOIN prompt_enrichments e ON p.prompt_id = e.prompt_id
+        LEFT JOIN raw_prompt_enrichments e ON p.prompt_id = e.prompt_id
         WHERE e.llm_domain IS NULL
     """
     if limit:
@@ -244,80 +191,45 @@ def run_enrichment(limit: int = None, reset: bool = False):
         return
 
     print(f"\n[4/4] Processing {total} prompts...")
-    print("-" * 70)
-
     start_time = time.time()
-    success = 0
-    errors = 0
+    success = errors = 0
 
-    # Use tqdm for progress bar
-    pbar = tqdm(
-        prompts_df.iterrows(),
-        total=total,
-        desc="Enriching",
-        unit="prompt",
-        ncols=100,
-        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
-    )
+    pbar = tqdm(prompts_df.iterrows(), total=total, desc="Enriching", unit="prompt")
 
-    for i, row in pbar:
+    for _, row in pbar:
         prompt_id = row['prompt_id']
-        prompt_text = row['prompt_text'][:300]
-
-        llm_prompt = EXTRACTION_PROMPT.format(prompt=prompt_text)
+        llm_prompt = EXTRACTION_PROMPT.format(prompt=row['prompt_text'][:300])
 
         try:
             response = generate(model, tokenizer, prompt=llm_prompt, max_tokens=60, sampler=sampler)
-            analysis = parse_and_validate(response)
+            analysis = parse_llm_response(response)
             success += 1
-        except (json.JSONDecodeError, ValidationError, ValueError) as e:
-            analysis = get_defaults()
+        except (json.JSONDecodeError, ValidationError, ValueError):
+            analysis = PromptAnalysis(domain="character", art_style="digital art", complexity_score=3)
             errors += 1
 
-        # Upsert to prompt_enrichments table
         con.execute("""
-            INSERT INTO prompt_enrichments (prompt_id, llm_domain, llm_art_style, llm_complexity_score, llm_enriched_at)
+            INSERT INTO raw_prompt_enrichments (prompt_id, llm_domain, llm_art_style, llm_complexity_score, llm_enriched_at)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT (prompt_id) DO UPDATE SET
-                llm_domain = EXCLUDED.llm_domain,
-                llm_art_style = EXCLUDED.llm_art_style,
-                llm_complexity_score = EXCLUDED.llm_complexity_score,
-                llm_enriched_at = EXCLUDED.llm_enriched_at
+                llm_domain = EXCLUDED.llm_domain, llm_art_style = EXCLUDED.llm_art_style,
+                llm_complexity_score = EXCLUDED.llm_complexity_score, llm_enriched_at = EXCLUDED.llm_enriched_at
         """, [prompt_id, analysis.domain, analysis.art_style, analysis.complexity_score])
 
-        # Update progress bar description
-        pbar.set_postfix({
-            "domain": analysis.domain[:8],
-            "style": analysis.art_style[:10],
-            "ok": success,
-            "err": errors
-        })
+        pbar.set_postfix({"ok": success, "err": errors})
 
-    # Close progress bar
     pbar.close()
 
     # Summary
     elapsed = time.time() - start_time
-    print("\n" + "-" * 70)
-    print(f"Done! {success} success, {errors} defaulted | {elapsed:.1f}s ({total/elapsed:.1f} prompts/s)")
-    print(f"Estimated time for 10K: {10000/total * elapsed / 60:.0f} minutes")
+    print(f"\nDone! {success} success, {errors} defaulted | {elapsed:.1f}s ({total/elapsed:.1f}/s)")
 
-    # Show distribution
-    print("\nDomain distribution:")
-    dist = con.execute("""
-        SELECT llm_domain, COUNT(*) as cnt FROM prompt_enrichments
-        WHERE llm_domain IS NOT NULL GROUP BY llm_domain ORDER BY cnt DESC
-    """).fetchdf()
-    for _, r in dist.iterrows():
-        print(f"  {r['llm_domain']:12s}: {r['cnt']}")
-
-    print("\nArt style distribution:")
-    dist = con.execute("""
-        SELECT llm_art_style, COUNT(*) as cnt FROM prompt_enrichments
-        WHERE llm_art_style IS NOT NULL GROUP BY llm_art_style ORDER BY cnt DESC
-    """).fetchdf()
-    for _, r in dist.iterrows():
-        print(f"  {r['llm_art_style']:15s}: {r['cnt']}")
+    # Show distributions
+    for col, label in [("llm_domain", "Domain"), ("llm_art_style", "Art style")]:
+        print(f"\n{label} distribution:")
+        dist = con.execute(f"SELECT {col}, COUNT(*) as cnt FROM raw_prompt_enrichments WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY cnt DESC").fetchdf()
+        for _, r in dist.iterrows():
+            print(f"  {r[col]:15s}: {r['cnt']}")
 
     con.close()
 
@@ -325,6 +237,6 @@ def run_enrichment(limit: int = None, reset: bool = False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, help="Limit prompts to process")
-    parser.add_argument("--reset", action="store_true", help="Reset and re-process already enriched prompts")
+    parser.add_argument("--reset", action="store_true", help="Reset and re-process")
     args = parser.parse_args()
     run_enrichment(limit=args.limit, reset=args.reset)

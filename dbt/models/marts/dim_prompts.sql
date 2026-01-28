@@ -1,6 +1,6 @@
 -- Dimension table for prompts
 -- Core prompt attributes only
--- ML enrichment stored separately in prompt_enrichments table (not managed by dbt)
+-- ML enrichment stored separately in raw_prompt_enrichments table (not managed by dbt)
 -- Access enriched data via ftr_llm_analysis and ftr_text_embeddings views
 
 select

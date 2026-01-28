@@ -80,16 +80,16 @@ select
     thumbs_down_count,
     download_count,
     -- Friction Score (0-100 scale)
-    -- Weighted composite: errors (3x), latency (2x), retries (1x)
+    -- Weights: errors 50%, latency 33%, retries 17%
     round(least(100, (
-        (error_rate * 3.0 * 33.33) +
-        (latency_score_normalized * 2.0 * 33.33) +
-        (retry_rate_normalized * 1.0 * 33.33)
+        (error_rate * 50) +
+        (latency_score_normalized * 33) +
+        (retry_rate_normalized * 17)
     )), 1) as friction_score,
-    -- Friction category
+    -- Friction category based on score thresholds
     case
-        when (error_rate * 3 + latency_score_normalized * 2 + retry_rate_normalized) / 6.0 < 0.1 then 'low'
-        when (error_rate * 3 + latency_score_normalized * 2 + retry_rate_normalized) / 6.0 < 0.3 then 'medium'
+        when (error_rate * 50 + latency_score_normalized * 33 + retry_rate_normalized * 17) < 10 then 'low'
+        when (error_rate * 50 + latency_score_normalized * 33 + retry_rate_normalized * 17) < 30 then 'medium'
         else 'high'
     end as friction_category
 from session_with_friction

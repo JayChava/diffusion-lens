@@ -1,5 +1,5 @@
 """
-Dagster Definitions - Entry point for the GenAI Session Analyzer pipeline.
+Dagster Definitions - Entry point for the GenAI Diffusion Lens pipeline.
 
 Run with:
     dagster dev -m src.pipeline.definitions

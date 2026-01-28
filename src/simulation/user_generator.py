@@ -6,9 +6,7 @@ Distribution (power law, typical freemium):
 - 25% pro tier (regular users)
 - 5% enterprise tier (power users)
 
-Growth pattern:
-- Exponential user growth throughout the month
-- More signups toward end of month (viral growth)
+Signups are spread uniformly across the month.
 """
 
 import duckdb
@@ -19,9 +17,7 @@ from datetime import datetime, timedelta
 
 
 fake = Faker()
-Faker.seed(42)
-random.seed(42)
-np.random.seed(42)
+# No seeds - each run produces different users
 
 # User tier distribution
 TIER_DISTRIBUTION = {
@@ -67,13 +63,9 @@ def _generate_growth_timestamps(num_samples: int, start_date: datetime, end_date
     """
     total_seconds = (end_date - start_date).total_seconds()
 
-    # Generate exponentially distributed random values (more toward end)
-    # Using beta distribution with alpha < beta for right-skew
-    random_values = np.random.beta(1.5, 4.0, num_samples)  # Skewed toward 0
-    random_values = 1 - random_values  # Flip to skew toward 1 (end of month)
-
-    # Apply additional exponential curve for growth feel
-    random_values = random_values ** (1 / growth_rate)
+    # Generate timestamps uniformly spread across month
+    # Use uniform distribution for even coverage of all weeks
+    random_values = np.random.uniform(0, 1, num_samples)
 
     timestamps = []
     for val in random_values:
@@ -114,8 +106,8 @@ def generate_users(
     else:
         end_date = datetime(year, month + 1, 1) - timedelta(seconds=1)
 
-    # Generate signup dates with growth pattern
-    signup_dates = _generate_growth_timestamps(num_users, start_date, end_date, growth_rate=1.8)
+    # Generate signup dates spread across month (mild growth pattern)
+    signup_dates = _generate_growth_timestamps(num_users, start_date, end_date, growth_rate=1.2)
 
     users = []
     for i, signup_date in enumerate(signup_dates):

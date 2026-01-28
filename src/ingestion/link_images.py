@@ -1,8 +1,8 @@
 """
-Link Images to Prompts - Connect downloaded images to prompt_enrichments table.
+Link Images to Prompts - Connect downloaded images to raw_prompt_enrichments table.
 
 This script scans the blob storage directory and links existing images
-to their corresponding prompts in prompt_enrichments (not dim_prompts,
+to their corresponding prompts in raw_prompt_enrichments (not dim_prompts,
 so links survive dbt runs).
 
 Usage:
@@ -23,9 +23,9 @@ BLOB_PATH = PROJECT_ROOT / "data" / "blob" / "images" / "generations"
 
 
 def ensure_enrichment_table(conn):
-    """Ensure prompt_enrichments table exists with image_path column."""
+    """Ensure raw_prompt_enrichments table exists with image_path column."""
     conn.execute('''
-        CREATE TABLE IF NOT EXISTS prompt_enrichments (
+        CREATE TABLE IF NOT EXISTS raw_prompt_enrichments (
             prompt_id BIGINT PRIMARY KEY,
             llm_domain VARCHAR,
             llm_art_style VARCHAR,
@@ -38,14 +38,14 @@ def ensure_enrichment_table(conn):
     ''')
 
     # Add image_path if missing
-    cols = conn.execute('DESCRIBE prompt_enrichments').fetchdf()
+    cols = conn.execute('DESCRIBE raw_prompt_enrichments').fetchdf()
     if 'image_path' not in cols['column_name'].values:
-        conn.execute('ALTER TABLE prompt_enrichments ADD COLUMN image_path VARCHAR')
+        conn.execute('ALTER TABLE raw_prompt_enrichments ADD COLUMN image_path VARCHAR')
 
 
 def link_images():
     """
-    Link downloaded images to prompts in prompt_enrichments.
+    Link downloaded images to prompts in raw_prompt_enrichments.
 
     Images are named gen_00000.png to gen_09999.png (sequential).
     Prompts are linked by their order in the database (sorted by prompt_id).
@@ -94,9 +94,9 @@ def link_images():
         # Relative path for portability
         relative_path = f"data/blob/images/generations/{image_file.name}"
 
-        # Upsert to prompt_enrichments
+        # Upsert to raw_prompt_enrichments
         conn.execute("""
-            INSERT INTO prompt_enrichments (prompt_id, image_path)
+            INSERT INTO raw_prompt_enrichments (prompt_id, image_path)
             VALUES (?, ?)
             ON CONFLICT (prompt_id) DO UPDATE SET
                 image_path = EXCLUDED.image_path
@@ -121,7 +121,7 @@ def check_status():
             COUNT(*) as total_prompts,
             COUNT(e.image_path) as linked_images
         FROM dim_prompts p
-        LEFT JOIN prompt_enrichments e ON p.prompt_id = e.prompt_id
+        LEFT JOIN raw_prompt_enrichments e ON p.prompt_id = e.prompt_id
     """).fetchone()
 
     print(f"Total prompts: {stats[0]}")
