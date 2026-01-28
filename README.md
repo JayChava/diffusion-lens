@@ -238,7 +238,3 @@ uv run ruff format .
 | MLX (Apple Silicon) | vLLM/TGI on GPU or Claude API |
 | Dagster dev | Dagster Cloud |
 | Streamlit | Evidence or custom React |
-
----
-
-*Built for Luma AI Data Science Interview | January 2025*
